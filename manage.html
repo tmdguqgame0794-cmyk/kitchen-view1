@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>주문관리(실시간) • 합석 헤드집계 • 색상우선 • Firebase</title>
+<style>
+:root{
+  --bg:#cbd5e1; --card:#ffffff; --line:#dde3ea; --muted:#475569;
+  --green:#16a34a; --yellow:#fde68a; --red:#dc2626;
+  --rowOdd:#eef2f6; --rowEven:#e9edf2; --deadline:#ffe2e2;
+  --accent:#2563eb; --accent-ink:#fff;
+  --done:#dcfce7; --done-border:#86efac;
+  --group:#2563eb;
+  --sky:#dbeafe;        /* 하늘(첫서빙 이후 타이머 시작) */
+  --dark:#c7ccd3;       /* 50분 경과 */
+  --alert:#fecaca;      /* 데드라인-10 */
+  --yellowRow:#fff7cc;  /* 인원수/첫서빙전 주문 상태 */
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Noto Sans KR,Apple SD Gothic Neo,Helvetica,Arial,sans-serif;color:#0f172a}
+.wrap{padding:8px 8px 18px; overflow-x:auto}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-size:13px;color:#334155;cursor:pointer}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:#1d4ed8}
+.btn.warn{border-color:#ef4444;color:#ef4444}
+.btn.disabled{background:#f1f5f9;border-color:#e2e8f0;color:#94a3b8;cursor:not-allowed}
+.grid{display:grid;width:100%;column-gap:6px;row-gap:0}
+.grid{grid-template-columns: 220px repeat(6,0.62fr) repeat(3,0.68fr) 180px 54px 120px 200px}
+.header{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--line);font-weight:700;padding:6px 8px;text-align:center}
+.cell{border-bottom:1px solid var(--line);padding:2px 6px;min-height:32px;display:flex;align-items:center;justify-content:center;background:transparent;line-height:1}
+.row-odd{background:var(--rowOdd)}
+.row-even{background:var(--rowEven)}
+.done-row{background:var(--done)!important; border-bottom-color:var(--done-border)!important}
+.left{position:sticky;left:0;z-index:3;justify-content:flex-start;padding-left:10px;border-right:1px solid var(--line);background:inherit}
+.left .meta{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;white-space:nowrap;overflow:hidden}
+.left .title{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.small{font-size:12px;color:#64748b}
+.rowReset{margin-left:auto}
+.people{display:flex;align-items:center;gap:6px;margin-left:6px}
+.people .spin{display:flex;gap:4px}
+.spinbtn{height:22px;min-width:22px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;font-weight:900;cursor:pointer}
+.pval{min-width:22px;text-align:center;font-weight:800}
+.togs{display:flex;gap:6px}
+.tog{position:relative;height:24px;min-width:26px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-weight:800;font-size:12px;color:#334155;display:flex;align-items:center;justify-content:center;padding:0 6px;cursor:pointer}
+.tog[aria-pressed="true"]{color:#fff;border-color:rgba(0,0,0,.08)}
+.tog.idx1[aria-pressed="true"]{background:#16a34a}
+.tog.idx2[aria-pressed="true"]{background:#ca8a04}
+.tog.idx3[aria-pressed="true"]{background:#dc2626}
+.tog.served::after{content:"✕";position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:900; text-shadow:0 0 2px #000,0 0 2px #000; pointer-events:none;}
+/* beverage */
+.bevbox{display:grid;grid-template-columns:repeat(3,1fr);gap:0;width:100%}
+.bevcell{display:flex;align-items:center;justify-content:center;gap:4px}
+.bevbtn{height:22px;min-width:22px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#1f2937;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0 6px}
+.bevbtn.chk{border-color:#64748b}
+.bevbtn.on{background:#0f172a;color:#fff;border-color:#0f172a}
+.bevqty{min-width:22px;text-align:center;font-weight:800}
+/* time */
+.timebox{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;width:100%}
+.timebtn{justify-self:start}
+.timetxt{justify-self:start;text-align:left;font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.price{text-align:right;font-weight:800;width:100%;padding-right:6px}
+.footer{background:#f8fafc;border-top:1px solid var(--line);position:sticky;bottom:0}
+.total{font-weight:800}
+.deadline{background:var(--deadline)!important}
+/* group border */
+.cell.group-on{border-left:2px solid var(--group);border-right:2px solid var(--group)}
+.cell.group-top{border-top:2px solid var(--group)}
+.cell.group-bot{border-bottom:2px solid var(--group)}
+.groupnums{display:none}
+/* 상태색 */
+.row-sky{background:var(--sky)!important}
+.row-dark{background:var(--dark)!important}
+.row-red{background:var(--alert)!important}
+.row-yellow{background:var(--yellowRow)!important}
+/* 비고 */
+.note-input{width:100%; border:1px solid var(--line); border-radius:8px; padding:4px 8px; font-size:12px; background:#fff; color:#0f172a}
+.paybtn{margin-left:6px}
+.statusdot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="toolbar">
+    <button id="resetAll" class="btn warn">전체 초기화</button>
+    <button id="toggleSelect" class="btn">합석 선택</button>
+    <button id="makeGroup" class="btn primary" disabled>그룹 만들기</button>
+    <button id="breakGroup" class="btn warn" disabled>그룹 해제</button>
+    <span id="connDot" class="statusdot" title="연결 상태"></span>
+  </div>
+  <div id="grid" class="grid"></div>
+</div>
+
+<!-- Firebase v8 -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+<script>
+(function(){
+  /* ================== 설정 ================== */
+  var CONFIG={
+    menus:["우삼겹숙주볶음","치즈김치전","만두계란탕","불닭콘치즈","치즈콘계란말이","두부김치"],
+    buttonsPerCell:3,
+    prices:{"우삼겹숙주볶음":18000,"치즈김치전":12000,"만두계란탕":16000,"불닭콘치즈":12000,"치즈콘계란말이":11000,"두부김치":12000,"COLA":2000,"CIDER":2000,"ZERO":2000},
+    tables:24, // 1~21 + 예비 3
+    warnMs:10*60*1000,
+    ROOM_ID:"CHOOKJAE"
+  };
+  var STATE_OFF=0, STATE_ACTIVE=1, STATE_SERVED=2;
+
+  /* ========== Firebase ========== */
+  var firebaseConfig = {
+    apiKey: "AIzaSyCWBPv3YgGKOH0b1e59I3QG9SfRtcNZSDY",
+    authDomain: "chookjae-8e133.firebaseapp.com",
+    projectId: "chookjae-8e133",
+    storageBucket: "chookjae-8e133.firebasestorage.app",
+    messagingSenderId: "82575498649",
+    appId: "1:82575498649:web:364e9c286a9f3ae7474708",
+    measurementId: "G-BQ95TPG37V",
+    databaseURL: "https://chookjae-8e133-default-rtdb.firebaseio.com"
+  };
+  try{ firebase.initializeApp(firebaseConfig); }catch(e){}
+  var db = firebase.database();
+  var ROOM = CONFIG.ROOM_ID;
+
+  /* 연결 상태 점 */
+  var connDot = document.getElementById('connDot');
+  db.ref(".info/connected").on("value", function(s){
+    var on = !!s.val();
+    connDot.style.background = on ? "#22c55e" : "#ef4444";
+  });
+
+  /* ================== 상태/저장 ================== */
+  function emptyRow(){
+    return {
+      people:0,
+      menu: CONFIG.menus.map(function(){ return Array(CONFIG.buttonsPerCell).fill(STATE_OFF); }),
+      bev: { COLA:{qty:0, served:false}, CIDER:{qty:0, served:false}, ZERO:{qty:0, served:false} },
+      time:null,timePlus:null,timeStamp:null,   // 수동 버튼 기반(유지)
+      firstServedAt:null,                       // 첫 접시 나간 순간
+      firstOrderedAt:null,                      // 첫 주문 입력 순간
+      done:false, groupId:null, head:null,
+      note:""
+    };
+  }
+  function emptyStore(){
+    return { rows:Array.from({length:CONFIG.tables}, emptyRow), groups:[], nextId:1, frontAnchors:[], completedQueue:[] };
+  }
+  var store = emptyStore(); var rows=store.rows; var groups=store.groups;
+
+  /* DB 경로 유틸 */
+  function tableRef(i){ return db.ref('orders/'+ROOM+'/tables/'+i); }
+  var totalsRef = db.ref('orders/'+ROOM+'/footerTotals');
+  var groupsRef = db.ref('orders/'+ROOM+'/groups');
+
+  /* 공용 유틸 */
+  var $=function(sel){ return document.querySelector(sel); };
+  var grid=$("#grid");
+  var fmtWon=new Intl.NumberFormat('ko-KR');
+  var pad2=function(n){ return String(n).padStart(2,'0'); };
+  var nowHHMM=function(){ var d=new Date(); return pad2(d.getHours())+":"+pad2(d.getMinutes()); };
+  var plus90=function(){ var d=new Date(); d.setMinutes(d.getMinutes()+90); return pad2(d.getHours())+":"+pad2(d.getMinutes()); };
+  function nowTs(){ return Date.now(); }
+
+  var countActive = function(arr){ return arr.filter(function(v){ return v===STATE_ACTIVE; }).length; };
+  var countOrdered = function(arr){ return arr.filter(function(v){ return v!==STATE_OFF; }).length; };
+  function bevActiveQty(b){ return b.served ? 0 : b.qty; }
+  function bevTotalQty(b){ return b.qty; }
+
+  function rowAnyOrdered(r){
+    var menus = r.menu.some(function(c){ return countOrdered(c)>0; });
+    var bevs  = (bevTotalQty(r.bev.COLA)+bevTotalQty(r.bev.CIDER)+bevTotalQty(r.bev.ZERO))>0;
+    return menus||bevs;
+  }
+  function rowAnyServed(r){
+    var menuServed = r.menu.some(function(c){ return c.some(function(st){ return st===STATE_SERVED; }); });
+    var bevServed = (r.bev.COLA.served||r.bev.CIDER.served||r.bev.ZERO.served);
+    return menuServed || bevServed;
+  }
+
+  function rowPrice(r){
+    var sum=0;
+    r.menu.forEach(function(c,i){ sum += countOrdered(c) * (CONFIG.prices[CONFIG.menus[i]]||0); });
+    sum += bevTotalQty(r.bev.COLA)*CONFIG.prices.COLA + bevTotalQty(r.bev.CIDER)*CONFIG.prices.CIDER + bevTotalQty(r.bev.ZERO)*CONFIG.prices.ZERO;
+    return sum;
+  }
+
+  /* ======= 실시간 구독: 테이블 전체 ======= */
+  for(let i=0;i<CONFIG.tables;i++){
+    tableRef(i).on('value', function(snap){
+      var v=snap.val();
+      if(!v){ // 초기 미생성 시 로컬 초기값을 올림
+        var seed = emptyRow();
+        tableRef(i).set(seed); return;
+      }
+      rows[i]=Object.assign(emptyRow(), v);
+      renderRow(i, true);
+      renderFooterTotalsOnly();
+    });
+  }
+  /* ======= 실시간 구독: 그룹 ======= */
+  groupsRef.on('value', function(snap){
+    groups = snap.val() || [];
+    store.groups = groups;
+    fullRender();
+  });
+
+  /* ======= 합계 발행 ======= */
+  function publishTotals(){
+    var sums = Array(CONFIG.menus.length + 3).fill(0);
+    rows.forEach(function(r){
+      r.menu.forEach(function(c,i){ sums[i]+=countActive(c); });
+      if(!r.bev.COLA.served) sums[CONFIG.menus.length]+=r.bev.COLA.qty;
+      if(!r.bev.CIDER.served) sums[CONFIG.menus.length+1]+=r.bev.CIDER.qty;
+      if(!r.bev.ZERO.served)  sums[CONFIG.menus.length+2]+=r.bev.ZERO.qty;
+    });
+    var obj = {};
+    CONFIG.menus.forEach(function(name, i){ obj[name]=sums[i]||0; });
+    obj["콜라"]=sums[CONFIG.menus.length]||0;
+    obj["사이다"]=sums[CONFIG.menus.length+1]||0;
+    obj["제로콜라"]=sums[CONFIG.menus.length+2]||0;
+    obj.updatedAt = Date.now();
+    totalsRef.set(obj);
+  }
+
+  /* ======= 색상/상태 ======= */
+  function isDeadlineSoon(r){
+    var ts = r.timeStamp || r.firstServedAt; // 타이머 기준: 수동 or 첫서빙
+    if(!ts) return false;
+    var deadline = ts + 90*60*1000;
+    return (deadline - Date.now()) <= CONFIG.warnMs;
+  }
+  function applyRowStateColor(i){
+    var r = rows[i];
+    var cells=document.querySelectorAll('.cell[data-row="'+i+'"]');
+    var ts = r.timeStamp || r.firstServedAt;
+    var now = Date.now();
+    var red=false, dark=false, green=false, sky=false, yellow=false;
+
+    // 노랑: (people>0 또는 주문 존재) && 첫 서빙 전 && 미완료
+    if((r.people>0 || rowAnyOrdered(r)) && !ts && !r.done){ yellow=true; }
+
+    if(ts){ // 타이머 시작됨(하늘색 단계 진입)
+      var elapsed = now - ts;
+      var remain  = (ts + 90*60*1000) - now;
+      if(remain <= 10*60*1000){ red=true; }
+      else if(elapsed >= 50*60*1000){ dark=true; }
+      else { sky=true; }
+    }
+    if(r.done) green=true;
+
+    Array.prototype.forEach.call(cells,function(n){
+      n.classList.remove('row-red','row-dark','done-row','row-sky','row-yellow');
+      if(red) n.classList.add('row-red');
+      else if(dark) n.classList.add('row-dark');
+      else if(green) n.classList.add('done-row');
+      else if(sky) n.classList.add('row-sky');
+      else if(yellow) n.classList.add('row-yellow');
+    });
+  }
+
+  /* ======= 렌더 공통 ======= */
+  function header(txt){ var d=document.createElement('div'); d.className="header"; d.textContent=txt; grid.appendChild(d); }
+  function cell(cls, rowIndex){ var d=document.createElement('div'); d.className="cell "+cls; d.dataset.row=rowIndex; return d; }
+
+  function renderHeader(){
+    grid.innerHTML="";
+    header("테이블/인원");
+    CONFIG.menus.forEach(function(m){ header(m); });
+    header("콜라"); header("사이다"); header("제로콜라");
+    header("시간"); header("완료"); header("가격"); header("비고");
+  }
+
+  function tableLabel(i){
+    if(i<=20) return (i+1)+"번 테이블"; // 1~21
+    var n=i-20; return "예비"+n;        // 22~24 → 예비1~3
+  }
+
+  function syncRow(i, patch){
+    var next = Object.assign({}, rows[i], patch||{});
+    rows[i]=next;
+    // 쓰기 재시도(간단)
+    tableRef(i).set(next).catch(function(){ setTimeout(function(){ tableRef(i).set(next); }, 1200); });
+    publishTotals();
+  }
+
+  function drawPeople(leftMeta, i){
+    var wrap=document.createElement('div'); wrap.className='people small';
+    var label=document.createElement('div'); label.textContent='인원';
+    var spin=document.createElement('div'); spin.className='spin';
+    var minus=document.createElement('button'); minus.className='spinbtn'; minus.textContent='−';
+    var val=document.createElement('div'); val.className='pval'; val.textContent=String(rows[i].people||0);
+    var plus=document.createElement('button'); plus.className='spinbtn'; plus.textContent='+';
+    minus.onclick=function(){ var p=Math.max(0,(rows[i].people||0)-1); syncRow(i,{people:p, firstOrderedAt: rows[i].firstOrderedAt || (p>0? nowTs(): null)}); applyRowStateColor(i); };
+    plus.onclick=function(){ var p=(rows[i].people||0)+1; syncRow(i,{people:p, firstOrderedAt: rows[i].firstOrderedAt || nowTs()}); applyRowStateColor(i); };
+    spin.appendChild(minus); spin.appendChild(val); spin.appendChild(plus);
+    wrap.appendChild(label); wrap.appendChild(spin);
+    leftMeta.appendChild(wrap);
+  }
+
+  function renderLeftCell(leftEl, i){
+    leftEl.innerHTML="";
+    var meta=document.createElement('div'); meta.className="meta";
+    var title2=document.createElement('div'); title2.className="title"; title2.textContent=tableLabel(i); meta.appendChild(title2);
+
+    // 인원수 스피너
+    drawPeople(meta, i);
+
+    // 결제(헤드 기준 1회)
+    var pay=document.createElement('button'); pay.className='btn small paybtn'; pay.textContent='결제';
+    pay.onclick=function(){
+      // 헤드 판정
+      var head = rows[i].head!=null ? rows[i].head : i;
+      // 결제 = 헤드 집계 기준 초기화
+      // 멤버가 있으면 전원 초기화
+      var members=[i];
+      if(rows[i].groupId!=null){
+        var g = (groups||[]).find(function(x){return x && x.id===rows[i].groupId;});
+        if(g) members = g.members.slice();
+      }
+      members.forEach(function(mi){ syncRow(mi, emptyRow()); });
+    };
+    meta.appendChild(pay);
+
+    // 단/더블 초기화
+    var reset=document.createElement('button'); reset.className="btn rowReset small"; reset.textContent="초기화";
+    var clickTimer=null;
+    function doRowReset(){ syncRow(i, emptyRow()); }
+    reset.addEventListener('click', function(){
+      if(clickTimer) return;
+      clickTimer = setTimeout(function(){ clickTimer=null; doRowReset(); }, 220);
+    });
+    reset.addEventListener('dblclick', function(){
+      if(clickTimer){ clearTimeout(clickTimer); clickTimer=null; }
+      doRowReset();
+    });
+    meta.appendChild(reset);
+
+    leftEl.appendChild(meta);
+  }
+
+  function drawMenuButtons(container, rIdx, mIdx){
+    var row=rows[rIdx]; var states=row.menu[mIdx];
+    var wrap=document.createElement('div'); wrap.className="togs";
+    states.forEach(function(st, i){
+      var b=document.createElement('button'); b.className="tog idx"+(i+1); b.textContent=String(i+1);
+      b.setAttribute('aria-pressed', st!==STATE_OFF ? 'true' : 'false');
+      if(st===STATE_SERVED) b.classList.add('served');
+      b.onclick=function(){
+        var cur=states[i];
+        if(cur===STATE_OFF){
+          for(var k=0;k<=i;k++){ if(states[k]!==STATE_SERVED) states[k]=STATE_ACTIVE; }
+          for(var k2=i+1;k2<states.length;k2++){ if(states[k2]!==STATE_SERVED) states[k2]=STATE_OFF; }
+          // 첫 주문 입력 시각 기록
+          if(!row.firstOrderedAt){ row.firstOrderedAt=nowTs(); }
+        }else if(cur===STATE_ACTIVE){
+          states[i]=STATE_SERVED;
+          // 첫 서빙(메뉴/음료 어느 쪽이든) 순간 기록
+          if(!row.firstServedAt){ row.firstServedAt=nowTs(); }
+        }else{
+          states[i]=STATE_OFF;
+        }
+        syncRow(rIdx, {menu: row.menu, firstOrderedAt: row.firstOrderedAt, firstServedAt: row.firstServedAt});
+        applyRowStateColor(rIdx);
+      };
+      wrap.appendChild(b);
+    });
+    container.innerHTML=""; container.appendChild(wrap);
+  }
+
+  function drawBeverage(container, rIdx, key){
+    var row=rows[rIdx]; var b = row.bev[key];
+    var box=document.createElement('div'); box.className="bevcell";
+    var minus=document.createElement('button'); minus.className="bevbtn"; minus.textContent="−";
+    var chk=document.createElement('button'); chk.className="bevbtn chk"+(b.served?" on":""); chk.textContent="✓";
+    var plus=document.createElement('button'); plus.className="bevbtn"; plus.textContent="+";
+    var qty=document.createElement('div'); qty.className="bevqty"; qty.textContent=String(b.qty);
+    minus.onclick=function(){ if(b.qty>0){ b.qty--; if(b.qty===0) b.served=false; if(!row.firstOrderedAt) row.firstOrderedAt=nowTs(); syncRow(rIdx,{bev:row.bev, firstOrderedAt:row.firstOrderedAt}); applyRowStateColor(rIdx);} };
+    plus.onclick =function(){ b.qty++; b.served=false; if(!row.firstOrderedAt) row.firstOrderedAt=nowTs(); syncRow(rIdx,{bev:row.bev, firstOrderedAt:row.firstOrderedAt}); applyRowStateColor(rIdx); };
+    chk.onclick  =function(){ if(b.qty>0){ b.served=!b.served; if(b.served && !row.firstServedAt) row.firstServedAt=nowTs(); syncRow(rIdx,{bev:row.bev, firstServedAt: row.firstServedAt}); applyRowStateColor(rIdx);} };
+    box.appendChild(minus); box.appendChild(qty); box.appendChild(plus); box.appendChild(chk);
+    container.innerHTML=""; container.appendChild(box);
+  }
+
+  function drawTime(container, rIdx){
+    var row=rows[rIdx];
+    var timebox=document.createElement('div'); timebox.className="timebox";
+    var btn=document.createElement('button'); btn.className="btn timebtn"; btn.textContent="시간";
+    var txt=document.createElement('div'); txt.className="timetxt"; timebox.appendChild(btn); timebox.appendChild(txt);
+
+    function canPress(){ return !!row.firstServedAt || rowAnyServed(row); }
+    function syncEnabled(){ var ok=canPress(); btn.classList.toggle('primary', ok); btn.classList.toggle('disabled', !ok); btn.disabled=!ok; }
+    function draw(){
+      if(!row.time){ txt.textContent=""; }
+      else{ txt.textContent = row.time + (row.timePlus? " ("+row.timePlus+")" : ""); }
+      applyRowStateColor(rIdx);
+    }
+    btn.onclick=function(){
+      if(!canPress()) return;
+      if(!row.time){
+        var payload={time:nowHHMM(), timePlus:plus90(), timeStamp: nowTs()};
+        syncRow(rIdx, payload);
+      }else{
+        syncRow(rIdx, {time:null,timePlus:null,timeStamp:null});
+      }
+      draw();
+    };
+    syncEnabled(); draw();
+    container.innerHTML=""; container.appendChild(timebox);
+  }
+
+  function isCompletable(rIdx){
+    var r=rows[rIdx];
+    var menusActive = r.menu.some(function(c){ return countActive(c)>0; });
+    var bevsActive  = (bevActiveQty(r.bev.COLA)+bevActiveQty(r.bev.CIDER)+bevActiveQty(r.bev.ZERO))>0;
+    var menusOrdered = r.menu.some(function(c){ return countOrdered(c)>0; });
+    var bevsOrdered  = (bevTotalQty(r.bev.COLA)+bevTotalQty(r.bev.CIDER)+bevTotalQty(r.bev.ZERO))>0;
+    return (menusOrdered||bevsOrdered) && !(menusActive||bevsActive);
+  }
+
+  function renderRow(i, fromDb){
+    var rowCells = Array.prototype.slice.call(grid.querySelectorAll('.cell[data-row="'+i+'"]'));
+    if(rowCells.length===0) return;
+    var left=rowCells.shift(); renderLeftCell(left, i);
+    for(var m=0;m<CONFIG.menus.length;m++){ var c=rowCells.shift(); drawMenuButtons(c,i,m); }
+    drawBeverage(rowCells.shift(), i, "COLA");
+    drawBeverage(rowCells.shift(), i, "CIDER");
+    drawBeverage(rowCells.shift(), i, "ZERO");
+    drawTime(rowCells.shift(), i);
+
+    var doneCell=rowCells.shift(); doneCell.innerHTML="";
+    var chk=document.createElement('input'); chk.type="checkbox"; chk.checked=rows[i].done;
+    chk.disabled=!isCompletable(i);
+    chk.onchange=function(){
+      if(!chk.checked){ syncRow(i,{done:false}); return; }
+      if(!isCompletable(i)){ chk.checked=false; return; }
+      syncRow(i,{done:true});
+    };
+    doneCell.appendChild(chk);
+
+    var priceCell=rowCells.shift(); priceCell.classList.add("price");
+    priceCell.textContent = fmtWon.format(rowPrice(rows[i]))+"원";
+
+    var noteCell=rowCells.shift(); noteCell.innerHTML="";
+    var input=document.createElement('input'); input.type='text'; input.className='note-input'; input.value=rows[i].note||""; input.placeholder="비고 입력";
+    var t=null;
+    input.addEventListener('input', function(){ clearTimeout(t); t=setTimeout(function(){ syncRow(i,{note:input.value}); }, 250); });
+    noteCell.appendChild(input);
+
+    applyRowStateColor(i);
+  }
+
+  function renderFooterTotalsOnly(){
+    var totalCells = document.querySelectorAll('.footer.total');
+    if(totalCells.length===0) return;
+    // 합계는 publishTotals()가 주방으로 송출만; 화면 푸터 셀은 그대로 유지(간결화)
+  }
+
+  function fullRender(){
+    renderHeader();
+    for(var i=0;i<rows.length;i++){
+      var rc = (i%2===0) ? "row-odd" : "row-even";
+      var left=cell(rc+" left", i); grid.appendChild(left); renderLeftCell(left, i);
+      for(var m=0;m<CONFIG.menus.length;m++){ var d=cell(rc, i); grid.appendChild(d); drawMenuButtons(d,i,m); }
+      var c1=cell(rc,i); c1.innerHTML='<div class="bevbox"></div>'; grid.appendChild(c1); drawBeverage(c1,i,"COLA");
+      var c2=cell(rc,i); c2.innerHTML='<div class="bevbox"></div>'; grid.appendChild(c2); drawBeverage(c2,i,"CIDER");
+      var c3=cell(rc,i); c3.innerHTML='<div class="bevbox"></div>'; grid.appendChild(c3); drawBeverage(c3,i,"ZERO");
+      var tcell=cell(rc,i); grid.appendChild(tcell); drawTime(tcell,i);
+      var dcell=cell(rc,i); grid.appendChild(dcell); var chk=document.createElement('input'); chk.type="checkbox"; chk.checked=rows[i].done; chk.disabled=!isCompletable(i);
+      (function(iRef, chkRef){ chkRef.addEventListener('change', function(){
+        if(!chkRef.checked){ syncRow(iRef,{done:false}); return; }
+        if(!isCompletable(iRef)){ chkRef.checked=false; return; }
+        syncRow(iRef,{done:true});
+      }); })(i, dcell.firstChild||document.createElement('input'));
+      dcell.appendChild(chk);
+      var pcell=cell(rc+" price",i); grid.appendChild(pcell); pcell.textContent = fmtWon.format(rowPrice(rows[i]))+"원";
+      var note=cell(rc, i); grid.appendChild(note);
+      var input=document.createElement('input'); input.type='text'; input.className='note-input'; input.value=rows[i].note||""; input.placeholder='비고 입력';
+      (function(iRef, el){ var t=null; el.addEventListener('input', function(){ clearTimeout(t); t=setTimeout(function(){ syncRow(iRef,{note:el.value}); },250); }); })(i, input);
+      note.appendChild(input);
+      applyRowStateColor(i);
+    }
+    // 푸터(합계 숫자 셀) 간소화: 별도의 합계 셀 없이 주방용 합계는 publishTotals()로만
+  }
+
+  // 30초마다 색 재계산(경계 반영)
+  setInterval(function(){ for(var i=0;i<rows.length;i++){ applyRowStateColor(i); } }, 30*1000);
+
+  // toolbar
+  var $reset=$("#resetAll"), $toggle=$("#toggleSelect"), $make=$("#makeGroup"), $break=$("#breakGroup");
+  $reset.onclick=function(){
+    if(!confirm("모든 내용을 초기화할까요?")) return;
+    for(let i=0;i<rows.length;i++){ syncRow(i, emptyRow()); }
+    groupsRef.set([]);
+  };
+
+  // (간단화) 합석 UI: 체크/해제만 – 헤드=최소번호 / 집계 및 결제는 헤드 기준
+  var ui={select:false, selected:new Set()};
+  $toggle.onclick=function(){ ui.select=!ui.select; alert(ui.select?"합석할 테이블들을 좌측에서 선택하세요(현재 간단 모드).":"합석 선택 해제"); };
+  function updateGroupButtons(){
+    $make.disabled = !ui.select || ui.selected.size<2;
+    $break.disabled = !ui.select || ui.selected.size===0;
+  }
+  $make.onclick=function(){
+    if(ui.selected.size<2) return;
+    var arr=Array.from(ui.selected).sort(function(a,b){return a-b;});
+    var head = arr[0];
+    var gid = Date.now();
+    var g = {id:gid, head:head, members:arr};
+    groupsRef.once('value').then(function(s){
+      var list = s.val()||[];
+      list.push(g); groupsRef.set(list);
+      arr.forEach(function(i){
+        syncRow(i, {groupId:gid, head:head});
+      });
+      ui.selected.clear(); ui.select=false; updateGroupButtons();
+    });
+  };
+  $break.onclick=function(){
+    if(ui.selected.size===0) return;
+    var arr=Array.from(ui.selected);
+    groupsRef.once('value').then(function(s){
+      var list = s.val()||[];
+      // 선택된 테이블이 속한 그룹들 제거
+      arr.forEach(function(i){
+        var gid=rows[i].groupId;
+        if(gid!=null){ list=list.filter(function(x){ return x.id!==gid; }); }
+        syncRow(i, {groupId:null, head:null});
+      });
+      groupsRef.set(list);
+      ui.selected.clear(); ui.select=false; updateGroupButtons();
+    });
+  };
+
+  // 헤더 렌더 시작
+  fullRender();
+
+})();
+</script>
+</body>
+</html>
