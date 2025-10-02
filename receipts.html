@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>영수증 & 활동로그</title>
+<style>
+:root{--bg:#0b1220;--panel:#0f172a;--ink:#e5e7eb;--muted:#94a3b8;--line:#2b3444;--accent:#3b82f6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Helvetica,Arial,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+h1{margin:0 0 10px;font-size:clamp(22px,3.6vh,38px)}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
+.btn{border:1px solid var(--line);background:#111827;color:#e5e7eb;border-radius:10px;padding:8px 12px;font-weight:900;cursor:pointer}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+.head{display:flex;justify-content:space-between;align-items:center}
+.small{color:var(--muted);font-size:12px}
+.badge{border:1px solid #2a3954;border-radius:999px;padding:2px 8px;font-size:12px;color:#cbd5e1}
+.table{width:100%;border-collapse:collapse;margin-top:8px}
+.table th,.table td{border-top:1px solid var(--line);padding:6px;text-align:left;font-size:14px}
+.sum{font-weight:1000;text-align:right;margin-top:6px}
+.log{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;background:#0b1324;border:1px solid var(--line);border-radius:10px;padding:10px}
+.totalbar{display:flex;align-items:center;gap:12px;margin:8px 0}
+.total{font-size:18px;font-weight:1000}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>영수증 로그</h1>
+  <div class="tools">
+    <div class="totalbar"><span class="total" id="grand">총 매출 0원</span></div>
+    <button id="resetReceipts" class="btn">영수증/합계 초기화</button>
+    <button id="resetLogs" class="btn">활동로그 초기화</button>
+  </div>
+  <div id="list"></div>
+
+  <h1>활동 로그 (텍스트)</h1>
+  <div class="card">
+    <div id="logs" class="log"></div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script>
+(function(){
+  const ROOM="CHOOKJAE";
+  const firebaseConfig={apiKey:"AIzaSyCWBPv3YgGKOH0b1e59I3QG9SfRtcNZSDY",authDomain:"chookjae-8e133.firebaseapp.com",projectId:"chookjae-8e133",storageBucket:"chookjae-8e133.firebasestorage.app",messagingSenderId:"82575498649",appId:"1:82575498649:web:364e9c286a9f3ae7474708",measurementId:"G-BQ95TPG37V",databaseURL:"https://chookjae-8e133-default-rtdb.firebaseio.com"};
+  try{firebase.initializeApp(firebaseConfig)}catch(e){}
+  const db=firebase.database();
+  const receiptsRef=db.ref('orders/'+ROOM+'/receipts');
+  const logsRef=db.ref('orders/'+ROOM+'/activityLogs');
+
+  const list=document.getElementById('list');
+  const grand=document.getElementById('grand');
+  const logsEl=document.getElementById('logs');
+
+  function fmt(ts){const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`}
+  function won(n){return (n||0).toLocaleString('ko-KR')+'원'}
+
+  receiptsRef.on('value', s=>{
+    const v=s.val()||{};
+    const entries=Object.entries(v).sort((a,b)=>b[1].at-a[1].at);
+    let total=0;
+    list.innerHTML="";
+    entries.forEach(([id,r])=>{
+      total += (r.total||0);
+      const card=document.createElement('div'); card.className='card';
+      const head=document.createElement('div'); head.className='head';
+      head.innerHTML=`<div><span class="badge">헤드 ${r.headTable}번</span> <span class="small">${fmt(r.at)}</span></div>
+                      <div class="small">멤버: ${r.members?.join(', ')||'-'}</div>`;
+      const table=document.createElement('table'); table.className='table';
+      table.innerHTML=`<thead><tr><th>테이블</th><th>메뉴</th><th>수량</th><th>금액</th></tr></thead><tbody></tbody>`;
+      const tbody=table.querySelector('tbody');
+      (r.items||[]).forEach(it=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${it.tableNo}</td><td>${it.menu}</td><td>${it.qty}</td><td>${won(it.price)}</td>`;
+        tbody.appendChild(tr);
+      });
+      const sum=document.createElement('div'); sum.className='sum'; sum.textContent='합계 '+won(r.total);
+      card.appendChild(head); card.appendChild(table); card.appendChild(sum);
+      list.appendChild(card);
+    });
+    grand.textContent = "총 매출 "+won(total);
+  });
+
+  logsRef.on('value', s=>{
+    const v=s.val()||{};
+    const lines=Object.values(v).sort((a,b)=>(a.at||0)-(b.at||0)).map(x=>x.text||"").join('\n');
+    logsEl.textContent = lines;
+  });
+
+  document.getElementById('resetReceipts').onclick=()=>{
+    if(!confirm('모든 영수증을 삭제하고 합계를 0으로 초기화할까요?')) return;
+    receiptsRef.set(null);
+  };
+  document.getElementById('resetLogs').onclick=()=>{
+    if(!confirm('활동 로그를 모두 삭제할까요?')) return;
+    logsRef.set(null);
+  };
+})();
+</script>
+</body>
+</html>

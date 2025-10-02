@@ -1,0 +1,244 @@
+<!doctype html> 
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>QR 주문</title>
+<style>
+:root{--bg:#0b1220;--panel:#0f172a;--ink:#e5e7eb;--muted:#94a3b8;--line:#233146;--accent:#3b82f6;--accent-ink:#fff}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Noto Sans KR,Apple SD Gothic Neo,Helvetica,Arial,sans-serif}
+.wrap{max-width:680px;margin:0 auto;padding:16px}
+.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+h1{margin:0;font-size:20px;font-weight:900}
+.badge{border:1px solid #2a3954;border-radius:999px;padding:4px 10px;font-size:12px;color:#cbd5e1}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
+.row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin:6px 0}
+.qty{display:flex;gap:6px;align-items:center}
+.btn{border:1px solid var(--line);background:#0b1525;color:#e5e7eb;border-radius:8px;padding:6px 10px;cursor:pointer}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:#1f49a3}
+.btn.call{background:#1f2937}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.actions{display:flex;gap:8px;justify-content:flex-end}
+.sum{text-align:right;font-weight:900}
+.small{font-size:12px;color:#9fb5d6}
+.warn{color:#fca5a5}
+.ok{color:#86efac}
+.sectionTitle{font-weight:800;margin:8px 0 4px}
+.divider{height:1px;background:#22314b;margin:10px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1 id="title">QR 주문</h1>
+    <span id="state" class="badge">연결중…</span>
+  </div>
+
+  <div id="timeBox" class="card">
+    <div class="small">이용시간</div>
+    <div id="deadline" class="sum">—</div>
+  </div>
+
+  <div id="orderBox" class="card">
+    <div class="small">수량을 선택한 뒤 주문하기를 누르세요.</div>
+
+    <div class="sectionTitle">메뉴</div>
+    <div id="menuList"></div>
+
+    <div class="divider"></div>
+
+    <div class="sectionTitle">음료 (50분 이후에도 주문 가능)</div>
+    <div id="bevList"></div>
+
+    <div class="sum" id="sum">0원</div>
+    <div class="actions">
+      <button id="call" class="btn call">직원 호출</button>
+      <button id="submit" class="btn primary">주문하기</button>
+    </div>
+  </div>
+
+  <div id="history" class="card">
+    <div class="small">현재까지 주문 요약</div>
+    <div id="summary"></div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script>
+(function(){
+  const params=new URLSearchParams(location.search);
+  const tableNo=Number(params.get('table')||0);
+  if(!tableNo){ alert('테이블 번호가 없습니다. 예: qr.html?table=5'); }
+  document.getElementById('title').textContent='QR 주문 · '+tableNo+'번';
+
+  const CONFIG={
+    menus:["우삼겹숙주볶음","치즈김치전","만두계란탕","불닭콘치즈","치즈콘계란말이","두부김치"],
+    bevKeys:[["COLA","콜라"],["CIDER","사이다"],["ZERO","제로콜라"]],
+    prices:{"우삼겹숙주볶음":18000,"치즈김치전":12000,"만두계란탕":16000,"불닭콘치즈":12000,"치즈콘계란말이":11000,"두부김치":12000,"COLA":2000,"CIDER":2000,"ZERO":2000}
+  };
+
+  const firebaseConfig={apiKey:"AIzaSyCWBPv3YgGKOH0b1e59I3QG9SfRtcNZSDY",authDomain:"chookjae-8e133.firebaseapp.com",projectId:"chookjae-8e133",storageBucket:"chookjae-8e133.firebasestorage.app",messagingSenderId:"82575498649",appId:"1:82575498649:web:364e9c286a9f3ae7474708",measurementId:"G-BQ95TPG37V",databaseURL:"https://chookjae-8e133-default-rtdb.firebaseio.com"};
+  try{firebase.initializeApp(firebaseConfig)}catch(e){}
+  const db=firebase.database(), ROOM="CHOOKJAE";
+  const tidx=tableNo-1;
+  const ref=db.ref('orders/'+ROOM+'/tables/'+tidx);
+
+  let qMenu = Array(CONFIG.menus.length).fill(0);
+  let qBev  = Array(CONFIG.bevKeys.length).fill(0);
+  const menuList = document.getElementById('menuList');
+  const bevList  = document.getElementById('bevList');
+  const sumEl    = document.getElementById('sum');
+  const submit   = document.getElementById('submit');
+  const callBtn  = document.getElementById('call');
+  const stateEl  = document.getElementById('state');
+  const deadlineEl=document.getElementById('deadline');
+
+  const btnRefsMenu=[]; // 50분 후 메뉴 버튼 비활성화용
+
+  function pad2(n){return String(n).padStart(2,'0');}
+  function hhmm(ts){if(!ts)return null;const d=new Date(ts);return pad2(d.getHours())+':'+pad2(d.getMinutes());}
+  function deadlineText(v){
+    if(!v)return'—'; if(v.math) return '제한 없음(수학과)';
+    const fs=v.firstServedAt; if(!fs) return '—';
+    const end=fs+90*60*1000; const remain=Math.max(0, Math.ceil((end-Date.now())/60000));
+    return '데드라인 '+hhmm(end)+' · 남은 '+remain+'분';
+  }
+
+  // 메뉴 UI
+  CONFIG.menus.forEach((name,i)=>{
+    const row=document.createElement('div');row.className='row';
+    const label=document.createElement('div');label.textContent=name;
+    const minus=document.createElement('button');minus.className='btn';minus.textContent='−';
+    const num=document.createElement('div');num.textContent='0';
+    const plus=document.createElement('button');plus.className='btn';plus.textContent='+';
+    minus.onclick=()=>{qMenu[i]=Math.max(0,qMenu[i]-1);num.textContent=qMenu[i];calc();};
+    plus.onclick =()=>{qMenu[i]++;num.textContent=qMenu[i];calc();};
+    btnRefsMenu.push({minus,plus});
+    const qtyBox=document.createElement('div');qtyBox.className='qty';qtyBox.appendChild(minus);qtyBox.appendChild(num);qtyBox.appendChild(plus);
+    const price=document.createElement('div');price.textContent=(CONFIG.prices[name]||0).toLocaleString('ko-KR')+'원';
+    row.appendChild(label);row.appendChild(qtyBox);row.appendChild(price);
+    menuList.appendChild(row);
+  });
+
+  // 음료 UI
+  CONFIG.bevKeys.forEach(([key,label],i)=>{
+    const row=document.createElement('div');row.className='row';
+    const lab=document.createElement('div');lab.textContent=label;
+    const minus=document.createElement('button');minus.className='btn';minus.textContent='−';
+    const num=document.createElement('div');num.textContent='0';
+    const plus=document.createElement('button');plus.className='btn';plus.textContent='+';
+    minus.onclick=()=>{qBev[i]=Math.max(0,qBev[i]-1);num.textContent=qBev[i];calc();};
+    plus.onclick =()=>{qBev[i]++;num.textContent=qBev[i];calc();};
+    const qtyBox=document.createElement('div');qtyBox.className='qty';qtyBox.appendChild(minus);qtyBox.appendChild(num);qtyBox.appendChild(plus);
+    const price=document.createElement('div');price.textContent=(CONFIG.prices[key]||0).toLocaleString('ko-KR')+'원';
+    row.appendChild(lab);row.appendChild(qtyBox);row.appendChild(price);
+    bevList.appendChild(row);
+  });
+
+  function calc(){
+    let s=0;
+    CONFIG.menus.forEach((n,i)=> s+= qMenu[i]*(CONFIG.prices[n]||0));
+    CONFIG.bevKeys.forEach(([k,_],i)=> s+= qBev[i]*(CONFIG.prices[k]||0));
+    sumEl.textContent=s.toLocaleString('ko-KR')+'원';
+  }
+
+  const summary=$("#summary");
+  function $(s){return document.querySelector(s);}
+  function renderSummary(v){
+    const lines=[];
+    (v?.menu||[]).forEach((c,mi)=>{
+      const o=c.filter(x=>x!==0).length; const s=c.filter(x=>x===2).length;
+      if(o>0) lines.push(CONFIG.menus[mi]+' : '+s+'/'+o);
+    });
+    const bevText=[];
+    [["COLA","콜라"],["CIDER","사이다"],["ZERO","제로콜라"]].forEach(([k,l])=>{
+      const q=v?.bev?.[k]?.qty||0; if(q>0) bevText.push(l+' × '+q);
+    });
+    summary.textContent = (lines.length? lines.join(' · ') : '—') + (bevText.length? (' / 음료 '+bevText.join(' · ')):'');
+  }
+
+  let menuLocked=false;
+  function setMenuLocked(lock){
+    menuLocked=lock;
+    btnRefsMenu.forEach(({minus,plus})=>{ minus.disabled=lock; plus.disabled=lock; });
+  }
+
+  function refreshSubmitLock(v){
+    const math=!!(v&&v.math); const ts=v?.firstServedAt;
+    if(math){ setMenuLocked(false); stateEl.textContent='주문 가능(수학과)'; return; }
+    if(!ts){ setMenuLocked(false); stateEl.textContent='주문 가능'; return; }
+    const elapsed=Date.now()-ts;
+    if(elapsed>=50*60*1000){
+      setMenuLocked(true);
+      stateEl.textContent='50분 경과 — 메뉴 주문 마감(음료는 계속 가능)';
+    }else{
+      setMenuLocked(false);
+      const left=Math.ceil((50*60*1000-elapsed)/60000);
+      stateEl.textContent='주문 가능(메뉴 마감까지 '+left+'분)';
+    }
+  }
+
+  ref.on('value',s=>{
+    const v=s.val()||{};
+    renderSummary(v);
+    refreshSubmitLock(v);
+    deadlineEl.textContent=deadlineText(v);
+  });
+
+  submit.onclick=function(){
+    const deltaMenu=qMenu.slice();
+    const deltaBev =qBev.slice();
+    if(deltaMenu.every(x=>x===0) && deltaBev.every(x=>x===0)) return;
+
+    ref.transaction(function(cur){
+      cur = cur || {people:0,menu:CONFIG.menus.map(()=>[0,0,0]),
+        bev:{COLA:{qty:0,served:false},CIDER:{qty:0,served:false},ZERO:{qty:0,served:false}},
+        time:null,timePlus:null,timeStamp:null,firstOrderedAt:null,firstServedAt:null,done:false,groupId:null,head:null,note:"",call:false,math:false};
+
+      if(!Array.isArray(cur.menu)) cur.menu=CONFIG.menus.map(()=>[0,0,0]);
+
+      // 메뉴 추가(메뉴 잠금이면 무시)
+      if(!menuLocked){
+        CONFIG.menus.forEach((_,mi)=>{
+          let need=deltaMenu[mi];
+          while(need>0){
+            if(cur.menu[mi].length<12) cur.menu[mi].push(0);
+            const k=cur.menu[mi].findIndex(v=>v===0);
+            if(k!==-1){ cur.menu[mi][k]=1; need--; } else { break; }
+          }
+        });
+      }
+
+      // 음료 추가(항상 허용)
+      CONFIG.bevKeys.forEach(([key],i)=>{
+        const add=deltaBev[i]||0; if(add>0){
+          cur.bev = cur.bev || {COLA:{qty:0,served:false},CIDER:{qty:0,served:false},ZERO:{qty:0,served:false}};
+          const prev = cur.bev[key]?.qty||0;
+          cur.bev[key]={qty:prev+add, served:false};
+        }
+      });
+
+      if(!cur.firstOrderedAt) cur.firstOrderedAt=Date.now();
+      return cur;
+    }, function(){
+      qMenu=Array(CONFIG.menus.length).fill(0);
+      qBev =Array(CONFIG.bevKeys.length).fill(0);
+      // 숫자 초기화
+      menuList.querySelectorAll('.row .qty div:nth-child(2)').forEach(el=>el.textContent='0');
+      bevList .querySelectorAll('.row .qty div:nth-child(2)').forEach(el=>el.textContent='0');
+      calc();
+    });
+  };
+
+  callBtn.onclick=function(){
+    ref.update({call:true});
+    callBtn.disabled=true; callBtn.textContent='호출중...';
+    setTimeout(()=>{callBtn.disabled=false;callBtn.textContent='직원 호출';},8000);
+  };
+})();
+</script>
+</body>
+</html>

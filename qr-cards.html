@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="format-detection" content="telephone=no"/>
+<title>QR 스티커 생성</title>
+<style>
+:root{--bg:#0b1220;--panel:#0f172a;--ink:#e5e7eb;--muted:#94a3b8;--line:#2b3444}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Noto Sans KR,Helvetica,Arial,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:14px}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
+input[type="number"],input[type="text"]{padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:#0b1525;color:#e5e7eb;min-width:120px}
+.btn{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#1f2937;color:#e5e7eb;cursor:pointer}
+.note{margin:8px 0 0;color:#fbbf24;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.card{background:#fff;color:#111;border:1px solid #ddd;border-radius:12px;padding:12px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.card h3{margin:6px 0 8px}
+.url{font-size:12px;color:#555;word-break:break-all;text-align:center}
+@media print{
+  body{background:#fff}
+  .tools{display:none}
+  .card{border-color:#999;page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>QR 스티커 생성</h1>
+  <div class="tools">
+    <label>시작 테이블: <input id="start" type="number" value="1" min="1"/></label>
+    <label>개수: <input id="count" type="number" value="24" min="1"/></label>
+    <label style="flex:1 1 360px">기본 URL(권장): <input id="base" type="text" placeholder="예: https://도메인/qr.html"/></label>
+    <button id="make" class="btn">생성</button>
+    <button onclick="window.print()" class="btn">인쇄 / PDF로 저장</button>
+  </div>
+  <div id="warn" class="note" style="display:none"></div>
+  <div id="grid" class="grid"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function(){
+  const grid=document.getElementById('grid');
+  const start=document.getElementById('start');
+  const count=document.getElementById('count');
+  const base =document.getElementById('base');
+  const warn =document.getElementById('warn');
+
+  function absoluteQrHtml(){
+    try{
+      const here = new URL(window.location.href);
+      const qrUrl = new URL('qr.html', here);
+      return qrUrl.toString().replace(/#.*$/,'');
+    }catch(e){
+      return '';
+    }
+  }
+
+  function showWarningIfNotPublic(urlStr){
+    try{
+      const u=new URL(urlStr);
+      const host=u.hostname;
+      const isLocal = (host==='localhost' || host==='127.0.0.1' || host.endsWith('.local') || host.match(/^192\.168\./));
+      const isHttps = (u.protocol==='https:');
+      if(isLocal || !isHttps){
+        warn.style.display='';
+        warn.textContent='⚠️ 휴대폰 카메라로 스캔하려면 외부에서 접근 가능한 HTTPS 주소가 필요합니다. 깃허브/호스팅 배포 후 https URL을 "기본 URL"에 입력하세요.';
+      }else{
+        warn.style.display='none';
+      }
+    }catch(e){
+      warn.style.display='';
+      warn.textContent='⚠️ 유효한 URL이 아닙니다. 예: https://도메인/qr.html';
+    }
+  }
+
+  function build(){
+    grid.innerHTML="";
+    const s=Number(start.value||1);
+    const c=Number(count.value||1);
+    const autoAbs = absoluteQrHtml();
+    const abs = (base.value || autoAbs);
+    showWarningIfNotPublic(abs);
+
+    for(let i=0;i<c;i++){
+      const t=s+i;
+      const url = new URL(abs);
+      url.searchParams.set('table', String(t));
+      if(url.protocol==='http:') url.protocol='https:'; // 가능하면 https로 교정
+      const finalUrl = url.toString();
+
+      const card=document.createElement('div'); card.className='card';
+      const box=document.createElement('div'); box.id='q'+t; card.appendChild(box);
+      const h3=document.createElement('h3'); h3.textContent=`테이블 ${t}`; card.appendChild(h3);
+      const p=document.createElement('div'); p.className='url'; p.textContent=finalUrl; card.appendChild(p);
+      const a=document.createElement('a'); a.href=finalUrl; a.textContent='링크 열기(테스트)'; a.target='_blank'; a.style.marginTop='6px'; card.appendChild(a);
+      grid.appendChild(card);
+
+      new QRCode(box,{text:finalUrl,width:180,height:180,correctLevel:QRCode.CorrectLevel.H});
+    }
+  }
+  document.getElementById('make').onclick=build;
+  build();
+})();
+</script>
+</body>
+</html>
